@@ -73,7 +73,7 @@
       </div>
 
       <div class="editor-col" id="editorCol" style="max-width: 700px;">
-        <textarea id="editor" class="editor" placeholder="Start writing…" spellcheck="true"></textarea>
+        <div id="editor" class="editor" contenteditable="true" spellcheck="true" data-placeholder="Start writing…"></div>
       </div>
     </main>
 
@@ -104,7 +104,25 @@
 
 <!-- ============ SELECTION POPOVER ============ -->
 <div id="selectionPopover" class="selection-popover" hidden>
-  <button id="addCommentBtn">Comment</button>
+  <select id="headingSelect" class="popover-heading-select" title="Text style">
+    <option value="P">Normal</option>
+    <option value="H1">Heading 1</option>
+    <option value="H2">Heading 2</option>
+    <option value="H3">Heading 3</option>
+  </select>
+  <span class="popover-divider"></span>
+  <button type="button" class="popover-btn popover-btn-bold" data-cmd="bold" title="Bold">B</button>
+  <button type="button" class="popover-btn popover-btn-italic" data-cmd="italic" title="Italic">I</button>
+  <button type="button" class="popover-btn popover-btn-underline" data-cmd="underline" title="Underline">U</button>
+  <span class="popover-divider"></span>
+  <button type="button" class="popover-btn" data-cmd="insertUnorderedList" title="Bullet list">
+    <svg viewBox="0 0 20 20"><circle cx="4" cy="5" r="1.1" fill="currentColor" stroke="none"/><circle cx="4" cy="10" r="1.1" fill="currentColor" stroke="none"/><circle cx="4" cy="15" r="1.1" fill="currentColor" stroke="none"/><path d="M8 5h9M8 10h9M8 15h9"/></svg>
+  </button>
+  <button type="button" class="popover-btn" data-cmd="insertOrderedList" title="Numbered list">
+    <svg viewBox="0 0 20 20"><text x="1.5" y="7" font-size="6" stroke="none" fill="currentColor">1</text><text x="1.5" y="12" font-size="6" stroke="none" fill="currentColor">2</text><text x="1.5" y="17" font-size="6" stroke="none" fill="currentColor">3</text><path d="M8 5h9M8 10h9M8 15h9"/></svg>
+  </button>
+  <span class="popover-divider"></span>
+  <button type="button" id="addCommentBtn" class="popover-btn popover-comment-btn">Comment</button>
 </div>
 
 <!-- ============ MODAL: DASHBOARD ============ -->
