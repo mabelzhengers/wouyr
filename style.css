@@ -97,8 +97,92 @@ svg {
 
 #app {
   height: 100vh;
-  display: flex;
+  display: none;
   flex-direction: column;
+}
+body.authed #app { display: flex; }
+body.authed #authScreen { display: none; }
+
+.account-label {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  margin-left: 8px;
+}
+
+/* ==========================================================================
+   Auth screen
+   ========================================================================== */
+
+.auth-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+}
+
+.auth-card {
+  width: 320px;
+  max-width: calc(100vw - 40px);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 28px 24px 24px;
+}
+
+.auth-brand {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text);
+  text-align: center;
+  margin-bottom: 22px;
+}
+
+.auth-tabs {
+  display: flex;
+  gap: 4px;
+  background: var(--surface);
+  padding: 3px;
+  border-radius: var(--radius);
+  margin-bottom: 18px;
+}
+.auth-tab {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  padding: 7px 10px;
+  border-radius: 2px;
+}
+.auth-tab.active {
+  background: var(--bg-elevated);
+  color: var(--text);
+}
+
+.auth-error {
+  font-size: 11px;
+  color: var(--warn);
+  background: var(--warn-soft);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  margin-bottom: 14px;
+  line-height: 1.5;
+}
+
+.auth-submit {
+  width: 100%;
+  margin-top: 6px;
+}
+
+.auth-hint {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  line-height: 1.5;
+  margin: 16px 0 0;
+  text-align: center;
 }
 
 .body-row {
@@ -517,6 +601,85 @@ body.focus-mode .sheet-topbar-left .saving-indicator {
   transition: opacity 0.15s ease;
 }
 body.focus-mode .editor-col { opacity: 1; }
+
+/* ==========================================================================
+   Comments panel (slide-over)
+   ========================================================================== */
+
+.comments-panel {
+  width: 300px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border-soft);
+  background: var(--bg-elevated);
+  display: flex;
+  flex-direction: column;
+  margin-right: -301px;
+  transition: margin-right 0.2s ease;
+}
+.comments-panel.open {
+  margin-right: 0;
+}
+
+.comments-panel-head {
+  height: 46px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 14px;
+  font-size: 12px;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border-soft);
+}
+.comments-panel-head .count-pill {
+  margin-left: 6px;
+}
+
+.comments-panel-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 16px 30px;
+}
+
+.comment-draft {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 10px;
+  margin-bottom: 16px;
+}
+.comment-draft-quote {
+  display: block;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--text-faint);
+  margin-bottom: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.comment-draft-input {
+  width: 100%;
+  resize: none;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 12px;
+  padding: 8px;
+  outline: none;
+}
+.comment-draft-input:focus {
+  border-color: var(--accent);
+}
+.comment-draft-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
 
 /* ==========================================================================
    Dashboard (modal)
@@ -961,4 +1124,12 @@ body.focus-mode .editor-col { opacity: 1; }
   }
   .sheet-title { max-width: 160px; }
   .editor-col { padding: 20px 18px 16px; }
+  .comments-panel {
+    position: absolute;
+    top: 0; bottom: 0; right: 0;
+    z-index: 30;
+  }
+  .comments-panel.open {
+    box-shadow: -8px 0 24px rgba(0,0,0,0.3);
+  }
 }
