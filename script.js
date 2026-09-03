@@ -196,7 +196,7 @@ const el = {
   goalList: $('#goalList'), newGoalBtn: $('#newGoalBtn'),
   commentList: $('#commentList'), commentCount: $('#commentCount'),
   issueList: $('#issueList'), issueCount: $('#issueCount'),
-  selectionPopover: $('#selectionPopover'), addCommentBtn: $('#addCommentBtn'),
+  selectionPopover: $('#selectionPopover'), addCommentBtn: $('#addCommentBtn'), headingSelect: $('#headingSelect'),
   openComments: $('#openComments'), closeComments: $('#closeComments'), commentsPanel: $('#commentsPanel'),
   commentDraft: $('#commentDraft'), commentDraftQuote: $('#commentDraftQuote'),
   commentDraftInput: $('#commentDraftInput'), commentDraftCancel: $('#commentDraftCancel'), commentDraftSave: $('#commentDraftSave'),
@@ -400,7 +400,7 @@ function deleteNode(id) {
   if (toDelete.has(activeId)) {
     activeId = null;
     el.sheetTitle.value = '';
-    el.editor.value = '';
+    el.editor.innerHTML = '';
     hideCommentDraft();
     el.selectionPopover.hidden = true;
   }
@@ -414,26 +414,42 @@ function deleteNode(id) {
 function renderEditorEmptyStateIfNeeded() {
   if (!activeId) {
     el.sheetTitle.placeholder = 'select or create a sheet';
-    el.editor.placeholder = 'Nothing selected. Choose a sheet from the sidebar, or create one.';
+    el.editor.dataset.placeholder = 'Nothing selected. Choose a sheet from the sidebar, or create one.';
     el.sheetTitle.disabled = true;
-    el.editor.disabled = true;
+    el.editor.contentEditable = 'false';
   } else {
     el.sheetTitle.disabled = false;
-    el.editor.disabled = false;
+    el.editor.contentEditable = 'true';
     el.sheetTitle.placeholder = 'untitled';
-    el.editor.placeholder = 'Start writing…';
+    el.editor.dataset.placeholder = 'Start writing…';
   }
+  updateEditorEmptyClass();
 }
 
 /* ---------------------------------------------------------------------- */
-/* 4. EDITOR                                                                */
+/* 4. EDITOR — rich text via a contenteditable div, stored as HTML         */
 /* ---------------------------------------------------------------------- */
+
+/* old sheets (and the seed content) are plain text with real newline
+   characters; wrapping that straight into innerHTML would collapse every
+   line onto one, so convert it to <br>-separated HTML once, on first load */
+function ensureHtml(content) {
+  if (!content) return '';
+  if (/<[a-z][\s\S]*>/i.test(content)) return content;
+  return content.split('\n').map(escapeHtml).join('<br>');
+}
+
+function updateEditorEmptyClass() {
+  const isEmpty = (el.editor.textContent || '').trim() === '';
+  el.editor.classList.toggle('is-empty', isEmpty);
+}
 
 function selectSheet(id) {
   activeId = id;
   const n = node(id);
   el.sheetTitle.value = n.title === 'Untitled sheet' ? '' : n.title;
-  el.editor.value = n.content || '';
+  n.content = ensureHtml(n.content);
+  el.editor.innerHTML = n.content;
   renderEditorEmptyStateIfNeeded();
   renderTree();
   clearSavingIndicator();
@@ -453,12 +469,18 @@ el.sheetTitle.addEventListener('input', () => {
   renderTree();
 });
 
+function syncEditorContent() {
+  if (!activeId) return;
+  node(activeId).content = el.editor.innerHTML;
+  updateEditorEmptyClass();
+  updateStatusbar();
+}
+
 let editorDebounce = null;
 el.editor.addEventListener('input', () => {
   if (!activeId) return;
-  node(activeId).content = el.editor.value;
+  syncEditorContent();
   flashSaving();
-  updateStatusbar();
   save();
   clearTimeout(editorDebounce);
   editorDebounce = setTimeout(() => {
@@ -466,10 +488,58 @@ el.editor.addEventListener('input', () => {
   }, 500);
 });
 
-function wordCount(text) {
+/* extract plain text from stored HTML content, inserting line breaks at
+   block boundaries so words from different lines/paragraphs don't merge */
+function plainTextFromHtml(html) {
+  if (!html) return '';
+  const tmp = document.createElement('div');
+  tmp.innerHTML = ensureHtml(html);
+  tmp.querySelectorAll('br').forEach((br) => br.replaceWith('\n'));
+  tmp.querySelectorAll('div, p, li, h1, h2, h3').forEach((blockEl) => blockEl.append('\n'));
+  return tmp.textContent || '';
+}
+
+function wordCount(html) {
+  const text = plainTextFromHtml(html);
   if (!text) return 0;
   const m = text.trim().match(/\S+/g);
   return m ? m.length : 0;
+}
+
+/* map a plain-text character offset (as counted by plainTextFromHtml/
+   wordCount) to a DOM Range inside the live editor, and back — this is
+   what lets a comment saved as {start, end} re-highlight the right passage
+   even though the content is rich HTML rather than a flat string */
+function getTextOffset(root, targetNode, targetOffset) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let node2, charCount = 0;
+  while ((node2 = walker.nextNode())) {
+    if (node2 === targetNode) return charCount + targetOffset;
+    charCount += node2.length;
+  }
+  return charCount;
+}
+
+function getTextOffsetRange(root, start, end) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let node2, charCount = 0;
+  let startNode, startOffset, endNode, endOffset;
+  while ((node2 = walker.nextNode())) {
+    const nextCount = charCount + node2.length;
+    if (startNode === undefined && start <= nextCount) {
+      startNode = node2; startOffset = start - charCount;
+    }
+    if (endNode === undefined && end <= nextCount) {
+      endNode = node2; endOffset = end - charCount;
+      break;
+    }
+    charCount = nextCount;
+  }
+  if (startNode === undefined || endNode === undefined) return null;
+  const range = document.createRange();
+  range.setStart(startNode, startOffset);
+  range.setEnd(endNode, endOffset);
+  return range;
 }
 
 function allSheets() {
@@ -723,25 +793,75 @@ function refreshDashboard() {
 /* 7. COMMENTS                                                             */
 /* ---------------------------------------------------------------------- */
 
-let pendingSelection = null;
+let pendingSelection = null; // { start, end, text } — plain-text offsets into the editor
 
-function updateSelectionPopover(e) {
-  if (!activeId || el.editor.disabled) return;
-  const start = el.editor.selectionStart, end = el.editor.selectionEnd;
+function updateSelectionPopover() {
+  if (!activeId || el.editor.contentEditable !== 'true') return;
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) { el.selectionPopover.hidden = true; return; }
+  const range = sel.getRangeAt(0);
+  if (!el.editor.contains(range.commonAncestorContainer)) { el.selectionPopover.hidden = true; return; }
+
+  const start = getTextOffset(el.editor, range.startContainer, range.startOffset);
+  const end = getTextOffset(el.editor, range.endContainer, range.endOffset);
   if (start === end) { el.selectionPopover.hidden = true; return; }
-  pendingSelection = { start, end, text: el.editor.value.slice(start, end) };
-  const x = e.clientX, y = e.clientY;
-  el.selectionPopover.style.left = x + 'px';
-  el.selectionPopover.style.top = (y + window.scrollY - 40) + 'px';
+
+  pendingSelection = { start: Math.min(start, end), end: Math.max(start, end), text: sel.toString() };
+
+  const rect = range.getBoundingClientRect();
+  el.selectionPopover.style.left = (rect.left + rect.width / 2 + window.scrollX) + 'px';
+  el.selectionPopover.style.top = (rect.top + window.scrollY - 42) + 'px';
   el.selectionPopover.hidden = false;
 }
 
 el.editor.addEventListener('mouseup', updateSelectionPopover);
 el.editor.addEventListener('keyup', (e) => {
   if (['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) return;
-  if (el.editor.selectionStart === el.editor.selectionEnd) { el.selectionPopover.hidden = true; }
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed) { el.selectionPopover.hidden = true; }
+  else { updateSelectionPopover(); }
 });
-el.editor.addEventListener('blur', () => { setTimeout(() => { el.selectionPopover.hidden = true; }, 150); });
+
+/* hide the toolbar only when the click lands outside both it and the editor —
+   this (rather than a blur handler) is what lets someone click several
+   formatting buttons in a row without the popover disappearing between clicks */
+document.addEventListener('mousedown', (e) => {
+  if (!el.selectionPopover.hidden && !el.selectionPopover.contains(e.target) && !el.editor.contains(e.target)) {
+    el.selectionPopover.hidden = true;
+  }
+});
+
+/* restore the saved selection into the live document, so formatting always
+   applies to the passage that was highlighted even if focus moved away
+   (e.g. to click a toolbar button) in between */
+function restorePendingSelectionRange() {
+  if (!pendingSelection) return null;
+  const range = getTextOffsetRange(el.editor, pendingSelection.start, pendingSelection.end);
+  if (!range) return null;
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+  return range;
+}
+
+function applyFormatCommand(cmd, value) {
+  if (!pendingSelection || !activeId) return;
+  el.editor.focus();
+  restorePendingSelectionRange();
+  document.execCommand(cmd, false, value || null);
+  syncEditorContent();
+  flashSaving();
+  save();
+}
+
+el.selectionPopover.querySelectorAll('.popover-btn[data-cmd]').forEach((btn) => {
+  btn.addEventListener('click', () => applyFormatCommand(btn.dataset.cmd));
+});
+el.headingSelect.addEventListener('mousedown', (e) => e.stopPropagation());
+el.headingSelect.addEventListener('change', () => {
+  applyFormatCommand('formatBlock', el.headingSelect.value);
+  el.headingSelect.blur();
+});
 
 /* clicking "Comment" on the selection popover opens the comments panel with
    a blank draft note attached to that passage, instead of a modal prompt */
@@ -819,8 +939,14 @@ function renderComments() {
       </div>`;
     card.addEventListener('click', (e) => {
       if (e.target.closest('button')) return;
+      const range = getTextOffsetRange(el.editor, c.start, c.end);
+      if (!range) return;
       el.editor.focus();
-      el.editor.setSelectionRange(c.start, c.end);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      const container = range.startContainer.nodeType === 1 ? range.startContainer : range.startContainer.parentElement;
+      if (container && container.scrollIntoView) container.scrollIntoView({ block: 'center' });
     });
     card.querySelector('[data-del]').addEventListener('click', (e) => {
       e.stopPropagation();
@@ -854,7 +980,7 @@ function splitSentences(text) {
 
 function runGrammarCheck() {
   const n = activeId ? node(activeId) : null;
-  const text = n ? (n.content || '') : '';
+  const text = n ? plainTextFromHtml(n.content || '') : '';
   const issues = [];
   const sentences = splitSentences(text);
 
