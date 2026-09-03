@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>wouyr. — a writing space</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ============ TOP BAR ============ -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <span class="project-name" id="projectName" contenteditable="true" spellcheck="false">Untitled project</span>
+    </div>
+    <div class="topbar-right">
+      <button id="openSettings" class="icon-btn" title="Editor settings" aria-label="Editor settings">
+        <svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="2.4"/><path d="M10 2.5v2M10 15.5v2M17.5 10h-2M4.5 10h-2M15.4 4.6l-1.4 1.4M6 12.6l-1.4 1.4M15.4 15.4l-1.4-1.4M6 7.4L4.6 6"/></svg>
+      </button>
+      <button id="openDashboard" class="icon-btn dashboard-toggle" title="Dashboard" aria-label="Open dashboard">
+        <svg viewBox="0 0 20 20"><rect x="2.5" y="2.5" width="6" height="8" rx="1"/><rect x="11.5" y="2.5" width="6" height="5" rx="1"/><rect x="11.5" y="10.5" width="6" height="7" rx="1"/><rect x="2.5" y="13.5" width="6" height="4" rx="1"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="body-row">
+
+    <!-- ============ SIDEBAR ============ -->
+    <nav class="sidebar" id="sidebar">
+      <div class="sidebar-brand">wouyr.</div>
+      <div class="tree" id="tree"></div>
+      <div class="sidebar-actions">
+        <button id="newSheetBtn" class="text-btn">+ Sheet</button>
+        <button id="newGroupBtn" class="text-btn">+ Folder</button>
+      </div>
+    </nav>
+
+    <!-- toggle tab lives outside the sidebar so it stays reachable when collapsed -->
+    <button class="sidebar-toggle-tab" id="toggleSidebar" title="Hide sidebar" aria-label="Toggle sidebar">
+      <svg viewBox="0 0 20 20"><path d="M12 4l-6 6 6 6"/></svg>
+    </button>
+
+    <!-- ============ EDITOR ============ -->
+    <main class="editor-area">
+
+      <div class="sheet-topbar" id="sheetTopbar">
+        <div class="sheet-topbar-left">
+          <input id="sheetTitle" class="sheet-title" placeholder="untitled" spellcheck="false">
+          <span class="saving-indicator" id="savingIndicator"></span>
+        </div>
+        <div class="sheet-topbar-right">
+          <span class="word-count-inline" id="statusWords">0 words</span>
+          <button class="ring-btn" id="openDashboardRing" title="Open dashboard" aria-label="Open dashboard">
+            <svg viewBox="0 0 36 36" class="mini-ring">
+              <circle cx="18" cy="18" r="15" class="mini-ring-track"/>
+              <circle cx="18" cy="18" r="15" class="mini-ring-fill" id="miniRingFill"/>
+            </svg>
+            <span class="mini-ring-pct" id="miniRingPct">—</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="editor-col" id="editorCol" style="max-width: 700px;">
+        <textarea id="editor" class="editor" placeholder="Start writing…" spellcheck="true"></textarea>
+      </div>
+    </main>
+
+  </div>
+</div>
+
+<!-- ============ SELECTION POPOVER ============ -->
+<div id="selectionPopover" class="selection-popover" hidden>
+  <button id="addCommentBtn">Comment</button>
+</div>
+
+<!-- ============ MODAL: DASHBOARD ============ -->
+<div class="modal-backdrop" id="dashboardModalBackdrop" hidden>
+  <div class="modal modal-dashboard">
+    <div class="modal-header-row">
+      <h2>Dashboard</h2>
+      <button id="closeDashboard" class="icon-btn" aria-label="Close dashboard">
+        <svg viewBox="0 0 20 20"><path d="M5 5l10 10M15 5L5 15"/></svg>
+      </button>
+    </div>
+
+    <div class="dashboard-scroll">
+
+      <div class="stat-grid stat-grid-3" id="topStatGrid"></div>
+
+      <section class="d-section">
+        <div class="d-section-head goals-head">
+          <h3>Goals</h3>
+          <button id="newGoalBtn" class="text-btn subtle">+ New goal</button>
+        </div>
+        <div class="goal-list" id="goalList"></div>
+      </section>
+
+      <section class="d-section">
+        <div class="d-section-head">
+          <h3>Comments</h3>
+          <span class="count-pill" id="commentCount">0</span>
+        </div>
+        <p class="hint">Select text in the editor, then press “Comment” below the toolbar.</p>
+        <div id="commentList" class="item-list"></div>
+      </section>
+
+      <section class="d-section">
+        <div class="d-section-head">
+          <h3>Grammar &amp; style</h3>
+          <span class="count-pill" id="issueCount">0</span>
+        </div>
+        <div id="issueList" class="item-list"></div>
+      </section>
+
+    </div>
+  </div>
+</div>
+
+<!-- ============ MODAL: NEW GOAL ============ -->
+<div class="modal-backdrop" id="goalModalBackdrop" hidden>
+  <div class="modal modal-small">
+    <h2>New goal</h2>
+    <label class="field">
+      <span>Goal title</span>
+      <input type="text" id="goalTitle" placeholder="e.g. Finish first draft" spellcheck="false">
+    </label>
+    <label class="field">
+      <span>Target words</span>
+      <input type="number" id="goalTarget" min="1" placeholder="e.g. 80000">
+    </label>
+    <label class="field">
+      <span>Deadline</span>
+      <input type="date" id="goalDeadline">
+    </label>
+    <label class="field">
+      <span>Scope</span>
+      <div class="segmented" id="goalScopeSegmented">
+        <button type="button" data-scope="project" class="seg-btn active">Whole project</button>
+        <button type="button" data-scope="sheet" class="seg-btn">Single sheet</button>
+      </div>
+    </label>
+    <div class="modal-actions">
+      <div></div>
+      <div class="modal-actions-right">
+        <button id="cancelGoalBtn" class="text-btn">Cancel</button>
+        <button id="saveGoalBtn" class="primary-btn">Save goal</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ MODAL: SETTINGS ============ -->
+<div class="modal-backdrop" id="settingsModalBackdrop" hidden>
+  <div class="modal">
+    <h2>Editor settings</h2>
+
+    <label class="field">
+      <span>Appearance</span>
+      <div class="segmented" id="themeSegmented">
+        <button data-theme="dark" class="seg-btn active">Dark</button>
+        <button data-theme="light" class="seg-btn">Light</button>
+      </div>
+    </label>
+
+    <label class="field">
+      <span>Accent</span>
+      <div class="swatches" id="accentSwatches">
+        <button class="swatch" data-accent="sage" style="--sw:#8fa382" title="Sage"></button>
+        <button class="swatch" data-accent="gold" style="--sw:#c9a15f" title="Gold"></button>
+        <button class="swatch" data-accent="clay" style="--sw:#bd7f68" title="Clay"></button>
+        <button class="swatch" data-accent="ink" style="--sw:#7c93b0" title="Ink"></button>
+      </div>
+    </label>
+
+    <label class="field">
+      <span>Font size <em id="fontSizeVal"></em></span>
+      <input type="range" id="fontSizeRange" min="14" max="24" step="1">
+    </label>
+
+    <label class="field">
+      <span>Line height <em id="lineHeightVal"></em></span>
+      <input type="range" id="lineHeightRange" min="140" max="220" step="10">
+    </label>
+
+    <label class="field">
+      <span>Editor width <em id="editorWidthVal"></em></span>
+      <input type="range" id="editorWidthRange" min="520" max="900" step="20">
+    </label>
+
+    <label class="field checkbox-field">
+      <input type="checkbox" id="focusModeToggle">
+      <span>Dim everything but the editor</span>
+    </label>
+
+    <div class="modal-actions">
+      <div></div>
+      <div class="modal-actions-right">
+        <button id="closeSettingsBtn" class="primary-btn">Done</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ MODAL: RENAME / PROMPT (generic) ============ -->
+<div class="modal-backdrop" id="promptModalBackdrop" hidden>
+  <div class="modal modal-small">
+    <h2 id="promptTitle">Rename</h2>
+    <label class="field">
+      <input type="text" id="promptInput" spellcheck="false">
+    </label>
+    <div class="modal-actions">
+      <div></div>
+      <div class="modal-actions-right">
+        <button id="promptCancelBtn" class="text-btn">Cancel</button>
+        <button id="promptSaveBtn" class="primary-btn">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>
