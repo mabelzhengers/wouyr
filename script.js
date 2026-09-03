@@ -1,7 +1,7 @@
 /* ==========================================================================
    wouyr. — a minimalist writing space
    Single-file app logic. No build step, no dependencies, all state in
-   localStorage under STORAGE_KEY. Read top to bottom:
+   localStorage, namespaced per signed-in account. Read top to bottom:
      1. state + persistence
      2. seed data
      3. tree (sheets & folders) rendering + CRUD
@@ -13,19 +13,28 @@
      9. modals, settings, wiring
    ========================================================================== */
 
-const STORAGE_KEY = 'ledger_app_v1';
+const LEGACY_STORAGE_KEY = 'ledger_app_v1';   // pre-accounts single-store key
+const ACCOUNTS_KEY = 'ledger_accounts_v1';
+const SESSION_KEY = 'ledger_current_user';
 
 /* ---------------------------------------------------------------------- */
 /* 1. STATE + PERSISTENCE                                                  */
 /* ---------------------------------------------------------------------- */
+/* Everything is scoped to the signed-in account: each account's project
+   data lives under its own localStorage key. None of this leaves the
+   browser — "accounts" here just partition local storage and gate the UI
+   behind an email + password, they are not a real authenticated backend. */
 
-let store = loadStore() || seedStore();
-let activeId = store.lastActiveId || null;
+let store = null;
+let activeId = null;
+let currentUserEmail = null;
 let openMenuId = null;
 
-function loadStore() {
+function storageKeyFor(email) { return 'ledger_app_v1:' + email; }
+
+function loadStoreForUser(email) {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(storageKeyFor(email));
     return raw ? JSON.parse(raw) : null;
   } catch (e) {
     console.warn('Could not read saved data', e);
@@ -35,10 +44,11 @@ function loadStore() {
 
 let saveTimer = null;
 function save(immediate) {
+  if (!store || !currentUserEmail) return;
   const doSave = () => {
     try {
       store.lastActiveId = activeId;
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+      localStorage.setItem(storageKeyFor(currentUserEmail), JSON.stringify(store));
     } catch (e) {
       console.warn('Could not save', e);
     }
@@ -50,6 +60,35 @@ function save(immediate) {
 
 function uid() {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+}
+
+/* ---- accounts (email + password, hashed, local only) ---- */
+
+function loadAccounts() {
+  try { return JSON.parse(localStorage.getItem(ACCOUNTS_KEY)) || {}; }
+  catch (e) { return {}; }
+}
+function saveAccounts(accounts) {
+  localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
+}
+function normalizeEmail(email) { return email.trim().toLowerCase(); }
+
+async function hashPassword(password) {
+  const enc = new TextEncoder().encode(password);
+  const buf = await crypto.subtle.digest('SHA-256', enc);
+  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/* if this browser has old pre-account data sitting under the legacy key,
+   hand it to the first account created so nobody loses existing work */
+function migrateLegacyDataTo(email) {
+  try {
+    const legacyRaw = localStorage.getItem(LEGACY_STORAGE_KEY);
+    if (legacyRaw) {
+      localStorage.setItem(storageKeyFor(email), legacyRaw);
+      localStorage.removeItem(LEGACY_STORAGE_KEY);
+    }
+  } catch (e) { /* ignore */ }
 }
 
 /* ---------------------------------------------------------------------- */
@@ -139,6 +178,11 @@ const el = {
   sidebar: $('#sidebar'), tree: $('#tree'),
   toggleSidebar: $('#toggleSidebar'),
   projectName: $('#projectName'),
+  accountLabel: $('#accountLabel'),
+  signOutBtn: $('#signOutBtn'),
+  authScreen: $('#authScreen'), authTabs: $('#authTabs'),
+  authEmail: $('#authEmail'), authPassword: $('#authPassword'),
+  authError: $('#authError'), authSubmitBtn: $('#authSubmitBtn'),
   editorCol: $('#editorCol'),
   sheetTopbar: $('#sheetTopbar'),
   sheetTitle: $('#sheetTitle'), editor: $('#editor'),
@@ -153,6 +197,9 @@ const el = {
   commentList: $('#commentList'), commentCount: $('#commentCount'),
   issueList: $('#issueList'), issueCount: $('#issueCount'),
   selectionPopover: $('#selectionPopover'), addCommentBtn: $('#addCommentBtn'),
+  openComments: $('#openComments'), closeComments: $('#closeComments'), commentsPanel: $('#commentsPanel'),
+  commentDraft: $('#commentDraft'), commentDraftQuote: $('#commentDraftQuote'),
+  commentDraftInput: $('#commentDraftInput'), commentDraftCancel: $('#commentDraftCancel'), commentDraftSave: $('#commentDraftSave'),
   goalModalBackdrop: $('#goalModalBackdrop'), goalTitle: $('#goalTitle'), goalTarget: $('#goalTarget'),
   goalDeadline: $('#goalDeadline'), goalScopeSegmented: $('#goalScopeSegmented'),
   saveGoalBtn: $('#saveGoalBtn'), cancelGoalBtn: $('#cancelGoalBtn'),
@@ -354,11 +401,14 @@ function deleteNode(id) {
     activeId = null;
     el.sheetTitle.value = '';
     el.editor.value = '';
+    hideCommentDraft();
+    el.selectionPopover.hidden = true;
   }
   save(true);
   renderTree();
   renderEditorEmptyStateIfNeeded();
   updateStatusbar();
+  renderComments();
 }
 
 function renderEditorEmptyStateIfNeeded() {
@@ -387,8 +437,11 @@ function selectSheet(id) {
   renderEditorEmptyStateIfNeeded();
   renderTree();
   clearSavingIndicator();
+  hideCommentDraft();
+  el.selectionPopover.hidden = true;
   updateStatusbar();
   runGrammarCheck();
+  renderComments();
   save(true);
 }
 
@@ -690,21 +743,59 @@ el.editor.addEventListener('keyup', (e) => {
 });
 el.editor.addEventListener('blur', () => { setTimeout(() => { el.selectionPopover.hidden = true; }, 150); });
 
+/* clicking "Comment" on the selection popover opens the comments panel with
+   a blank draft note attached to that passage, instead of a modal prompt */
 el.addCommentBtn.addEventListener('click', () => {
   if (!pendingSelection || !activeId) return;
   el.selectionPopover.hidden = true;
+  openCommentsPanel();
+  showCommentDraft();
+});
+
+function openCommentsPanel() {
+  el.commentsPanel.classList.add('open');
+}
+function closeCommentsPanel() {
+  el.commentsPanel.classList.remove('open');
+}
+el.openComments.addEventListener('click', () => {
+  if (el.commentsPanel.classList.contains('open')) { closeCommentsPanel(); }
+  else { openCommentsPanel(); }
+});
+el.closeComments.addEventListener('click', closeCommentsPanel);
+
+function showCommentDraft() {
+  if (!pendingSelection) return;
+  el.commentDraftQuote.textContent = '“' + pendingSelection.text.slice(0, 90) + (pendingSelection.text.length > 90 ? '…' : '') + '”';
+  el.commentDraftInput.value = '';
+  el.commentDraft.hidden = false;
+  setTimeout(() => el.commentDraftInput.focus(), 30);
+}
+function hideCommentDraft() {
+  el.commentDraft.hidden = true;
+  el.commentDraftInput.value = '';
+  pendingSelection = null;
+}
+
+el.commentDraftCancel.addEventListener('click', hideCommentDraft);
+
+el.commentDraftSave.addEventListener('click', () => {
+  const body = el.commentDraftInput.value.trim();
+  if (!body || !pendingSelection || !activeId) return;
   const sel = pendingSelection;
-  openPrompt('Add a comment', '', (val) => {
-    if (!val || !val.trim()) return;
-    const n = node(activeId);
-    n.comments = n.comments || [];
-    n.comments.push({
-      id: uid(), start: sel.start, end: sel.end,
-      quote: sel.text.slice(0, 80), body: val.trim(), createdAt: Date.now()
-    });
-    save(true);
-    renderComments();
+  const n = node(activeId);
+  n.comments = n.comments || [];
+  n.comments.push({
+    id: uid(), start: sel.start, end: sel.end,
+    quote: sel.text.slice(0, 80), body, createdAt: Date.now()
   });
+  save(true);
+  hideCommentDraft();
+  renderComments();
+});
+
+el.commentDraftInput.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') el.commentDraftSave.click();
 });
 
 function renderComments() {
@@ -883,7 +974,6 @@ el.newSheetBtn.addEventListener('click', () => addSheet(null));
 el.newGroupBtn.addEventListener('click', () => addGroup(null));
 
 /* project name */
-el.projectName.textContent = store.projectName || 'Untitled project';
 el.projectName.addEventListener('input', () => {
   store.projectName = el.projectName.textContent.trim() || 'Untitled project';
   save();
@@ -934,23 +1024,126 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     [el.goalModalBackdrop, el.settingsModalBackdrop, el.promptModalBackdrop, el.dashboardModalBackdrop].forEach((m) => m.hidden = true);
     el.selectionPopover.hidden = true;
+    hideCommentDraft();
     closeMenus();
   }
+});
+
+/* ---------------------------------------------------------------------- */
+/* 10. AUTH — create account / sign in / sign out                          */
+/* ---------------------------------------------------------------------- */
+
+let authMode = 'signin';
+
+function setAuthMode(mode) {
+  authMode = mode;
+  el.authTabs.querySelectorAll('.auth-tab').forEach((b) => b.classList.toggle('active', b.dataset.mode === mode));
+  el.authSubmitBtn.textContent = mode === 'signin' ? 'Sign in' : 'Create account';
+  el.authPassword.autocomplete = mode === 'signin' ? 'current-password' : 'new-password';
+  hideAuthError();
+}
+
+function showAuthError(msg) {
+  el.authError.textContent = msg;
+  el.authError.hidden = false;
+}
+function hideAuthError() {
+  el.authError.hidden = true;
+}
+
+el.authTabs.addEventListener('click', (e) => {
+  const b = e.target.closest('.auth-tab');
+  if (!b) return;
+  setAuthMode(b.dataset.mode);
+});
+
+el.authEmail.addEventListener('keydown', (e) => { if (e.key === 'Enter') el.authPassword.focus(); });
+el.authPassword.addEventListener('keydown', (e) => { if (e.key === 'Enter') el.authSubmitBtn.click(); });
+
+el.authSubmitBtn.addEventListener('click', async () => {
+  const email = normalizeEmail(el.authEmail.value);
+  const password = el.authPassword.value;
+
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    showAuthError('Enter a valid email address.');
+    return;
+  }
+  if (!password || password.length < 6) {
+    showAuthError('Password must be at least 6 characters.');
+    return;
+  }
+
+  el.authSubmitBtn.disabled = true;
+  try {
+    const accounts = loadAccounts();
+
+    if (authMode === 'signup') {
+      if (accounts[email]) {
+        showAuthError('An account with that email already exists — sign in instead.');
+        return;
+      }
+      const passwordHash = await hashPassword(password);
+      accounts[email] = { passwordHash, createdAt: Date.now() };
+      saveAccounts(accounts);
+      migrateLegacyDataTo(email);
+      signIntoSession(email);
+    } else {
+      const account = accounts[email];
+      if (!account) {
+        showAuthError('No account found with that email. Try “Create account” instead.');
+        return;
+      }
+      const passwordHash = await hashPassword(password);
+      if (passwordHash !== account.passwordHash) {
+        showAuthError('Incorrect email or password.');
+        return;
+      }
+      signIntoSession(email);
+    }
+  } finally {
+    el.authSubmitBtn.disabled = false;
+  }
+});
+
+function signIntoSession(email) {
+  localStorage.setItem(SESSION_KEY, email);
+  el.authEmail.value = '';
+  el.authPassword.value = '';
+  hideAuthError();
+  startAppForUser(email);
+}
+
+el.signOutBtn.addEventListener('click', () => {
+  if (!confirm('Sign out? Your work is saved to this account and will be here when you sign back in.')) return;
+  localStorage.removeItem(SESSION_KEY);
+  document.body.classList.remove('authed');
+  store = null;
+  activeId = null;
+  currentUserEmail = null;
+  setAuthMode('signin');
+  setTimeout(() => el.authEmail.focus(), 30);
 });
 
 /* ---------------------------------------------------------------------- */
 /* INIT                                                                     */
 /* ---------------------------------------------------------------------- */
 
-function init() {
+function startAppForUser(email) {
+  currentUserEmail = email;
+  store = loadStoreForUser(email) || seedStore();
+  activeId = store.lastActiveId || null;
+
   if (!store.settings) store.settings = { theme: 'dark', accent: 'sage', fontSize: 17, lineHeight: 170, editorWidth: 700, focusMode: false };
 
   // migrate the old single-goal schema to the new goals array
   if (!store.goals) {
     store.goals = store.goal ? [{ ...store.goal, id: uid(), title: 'Goal', sheetId: store.goal.scope === 'sheet' ? activeId : null }] : [];
     delete store.goal;
-    save(true);
   }
+
+  document.body.classList.add('authed');
+  el.projectName.textContent = store.projectName || 'Untitled project';
+  el.accountLabel.textContent = email;
 
   applySettings();
   renderTree();
@@ -960,6 +1153,18 @@ function init() {
     renderEditorEmptyStateIfNeeded();
     updateStatusbar();
   }
+  save(true);
 }
 
-init();
+/* resume an existing session, otherwise show the sign-in screen */
+(function initAuth() {
+  const sessionEmail = localStorage.getItem(SESSION_KEY);
+  const accounts = loadAccounts();
+  if (sessionEmail && accounts[sessionEmail]) {
+    startAppForUser(sessionEmail);
+  } else {
+    localStorage.removeItem(SESSION_KEY);
+    document.body.classList.remove('authed');
+    setAuthMode('signin');
+  }
+})();
